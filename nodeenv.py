@@ -55,7 +55,8 @@ src_base_url = None
 
 is_PY3 = sys.version_info[0] >= 3
 is_WIN = platform.system() == 'Windows'
-is_CYGWIN = platform.system().startswith(('CYGWIN', 'MSYS'))
+is_CYGWIN = platform.system().startswith('CYGWIN')
+is_MSYS = (is_WIN and sysconfig.get_platform().startswith("mingw"))
 
 ignore_ssl_certs = False
 
@@ -557,7 +558,7 @@ def get_node_bin_url(version):
         'system': platform.system().lower(),
         'arch': archmap[platform.machine()],
     }
-    if is_WIN or is_CYGWIN:
+    if is_WIN or is_CYGWIN or is_MSYS:
         postfix = '-win-%(arch)s.zip' % sysinfo
     elif is_x86_64_musl():
         postfix = '-linux-x64-musl.tar.gz'
@@ -606,7 +607,7 @@ def download_node_src(node_url, src_dir, args):
     dl_contents = _download_node_file(node_url)
     logger.info('.', extra=dict(continued=True))
 
-    if is_WIN or is_CYGWIN:
+    if is_WIN or is_CYGWIN or is_MSYS:
         ctx = zipfile.ZipFile(dl_contents)
         members = operator.methodcaller('namelist')
         member_name = lambda s: s  # noqa: E731
@@ -666,10 +667,10 @@ def copy_node_from_prebuilt(env_dir, src_dir, node_version):
     Copy prebuilt binaries into environment
     """
     logger.info('.', extra=dict(continued=True))
-    if is_WIN:
+    if is_WIN and not is_MSYS:
         dest = join(env_dir, 'Scripts')
         mkdir(dest)
-    elif is_CYGWIN:
+    elif is_CYGWIN or is_MSYS:
         dest = join(env_dir, 'bin')
         mkdir(dest)
         # write here to avoid https://bugs.python.org/issue35650
@@ -681,7 +682,7 @@ def copy_node_from_prebuilt(env_dir, src_dir, node_version):
     src_folder, = glob.glob(src_folder_tpl)
     copytree(src_folder, dest, True)
 
-    if is_CYGWIN:
+    if is_CYGWIN or is_MSYS:
         for filename in ('npm', 'npx', 'node.exe'):
             filename = join(env_dir, 'bin', filename)
             if os.path.exists(filename):
@@ -898,7 +899,7 @@ def install_activate(env_dir, args):
     """
     Install virtual environment activation script
     """
-    if is_WIN:
+    if is_WIN and not is_MSYS:
         files = {
             'activate.bat': ACTIVATE_BAT,
             "deactivate.bat": DEACTIVATE_BAT,
@@ -968,11 +969,13 @@ def install_activate(env_dir, args):
         writefile(file_path, content, append=need_append)
 
     if not os.path.exists(shim_nodejs):
-        if is_WIN:
+        if is_WIN and not is_MSYS:
             try:
                 callit(['mklink', shim_nodejs, 'node.exe'], True, True)
             except OSError:
                 logger.error('Error: Failed to create nodejs.exe link')
+        elif is_MSYS:
+            shutil.copyfile(shim_node, shim_nodejs)
         else:
             os.symlink("node", shim_nodejs)
 
@@ -1005,7 +1008,7 @@ def create_environment(env_dir, args):
     # for install
     install_activate(env_dir, args)
     if node_version_from_args(args) < parse_version("0.6.3") or args.with_npm:
-        instfunc = install_npm_win if is_WIN or is_CYGWIN else install_npm
+        instfunc = install_npm_win if is_WIN or is_CYGWIN or is_MSYS else install_npm
         instfunc(env_dir, src_dir, args)
     if args.requirements:
         install_packages(env_dir, args)
